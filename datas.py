@@ -312,6 +312,75 @@ def download_us_options_chain(ticker, expiration=None, out_dir="options_us"):
     except Exception as exc:
         print(f"download options {ticker} error: {exc}")
 
+def download_us_daily_data(ticker, flag='raw', start_date='1990-01-01', end_date=None, interval='1d'):
+    try:
+        fg = 'adj' if flag in ['adj', 'qfq', 'hfq'] else 'raw'
+        path = f'data_us_{fg}'
+        if not os.path.isdir(path):
+            os.makedirs(path)
+
+        auto_adjust = fg == 'adj'
+        df = yf.download(ticker, start=start_date, end=end_date, interval=interval, auto_adjust=auto_adjust, progress=False)
+        if df is None or df.empty:
+            print(f"download us stock {ticker} empty data")
+            return
+
+        df = df.reset_index()
+        df = df.rename(columns={
+            "Date": "date",
+            "Open": "open",
+            "Close": "close",
+            "High": "high",
+            "Low": "low",
+            "Volume": "volume"
+        })
+
+        if "date" in df.columns:
+            df["date"] = pd.to_datetime(df["date"]).dt.strftime('%Y-%m-%d')
+
+        df['pctChg'] = df['close'].pct_change() * 100
+        df['vwap'] = (df['high'] + df['low'] + df['close']) / 3
+        df['asset'] = ticker
+
+        df = df[['asset', 'date', 'open', 'close', 'high', 'low', 'volume', 'vwap', 'pctChg']]
+
+        safe_ticker = ticker.replace('/', '_')
+        df.to_csv(f'./{path}/{safe_ticker}.csv', index=False)
+    except Exception as e:
+        print(f"download us stock {ticker} error!!!")
+
+def download_all_us_daily_data(list_tickers, flag='raw', start_date='1990-01-01', end_date=None, interval='1d'):
+    fg = 'adj' if flag in ['adj', 'qfq', 'hfq'] else 'raw'
+    path = f'data_us_{fg}'
+    if not os.path.isdir(path):
+        os.makedirs(path)
+
+    count = os.cpu_count()
+    pool = Pool(min(count * 4, 60))
+    for ticker in list_tickers:
+        pool.apply_async(download_us_daily_data, (ticker, flag, start_date, end_date, interval))
+
+    pool.close()
+    pool.join()
+
+def get_all_us_daily_data(start_time, end_time, list_assets, flag='raw'):
+    fg = 'adj' if flag in ['adj', 'qfq', 'hfq'] else 'raw'
+    data_path = f'data_us_{fg}'
+
+    list_all = []
+    for ticker in list_assets:
+        safe_ticker = ticker.replace('/', '_')
+        df = pd.read_csv(f'{data_path}/{safe_ticker}.csv')
+        df['asset'] = ticker
+        list_all.append(df[(df['date'] >= start_time) & (df['date'] <= end_time)])
+
+    print(len(list_all))
+
+    df_all = pd.concat(list_all)
+    df_all = df_all.reset_index(drop=True)
+    df_all = df_all[['asset', 'date', 'open', 'close', 'high', 'low', 'volume', 'vwap', 'pctChg']]
+    return df_all
+
 
 if __name__ == "__main__":
     today = date.today().strftime("%Y-%m-%d")
